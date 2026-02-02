@@ -1,6 +1,6 @@
-# Z-Router: High-Performance Zero-Allocation HTTP Router
+# Wand Router: High-Performance Zero-Allocation HTTP Router
 
-Z-Router (Zero Router) is a blazing fast, zero-allocation HTTP router kernel for Go, built on a Radix Trie structure. It prioritizes memory efficiency, Strict correctness, and rigorous conflict detection.
+Wand Router is a blazing fast, zero-allocation HTTP router kernel for Go, built on a Radix Trie structure. It prioritizes memory efficiency, strict correctness, and rigorous conflict detection.
 
 **Status**: Production-Ready Kernel (`v1.0`)
 
@@ -77,7 +77,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"willuny.xyz/router"
+	"github.com/willuny-labs/wand/router"
 )
 
 func main() {
@@ -85,7 +85,7 @@ func main() {
 
 	// 1. Static Route
 	r.GET("/", func(w http.ResponseWriter, req *http.Request) {
-		w.Write([]byte("Welcome to Z-Router"))
+		w.Write([]byte("Welcome to Wand"))
 	})
 
 	// 2. Param Route (Zero-Alloc param retrieval)
@@ -101,8 +101,32 @@ func main() {
 	})
 
 	log.Println("Server running on :8080")
-	http.ListenAndServe(":8080", r)
+http.ListenAndServe(":8080", r)
 }
+```
+
+### Middleware & Groups
+
+Middleware chains are pre-composed at registration time for zero per-request overhead.
+Call `Use` before registering routes:
+
+```go
+r := router.NewRouter()
+_ = r.Use(middleware.Recovery)
+
+api := r.Group("/api")
+_ = api.GET("/health", handler)
+```
+
+To adapt HandleFunc-style middleware:
+
+```go
+_ = r.Use(router.WrapHandle(func(next router.HandleFunc) router.HandleFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// do something
+		next(w, r)
+	}
+}))
 ```
 
 ### Frozen Router (Production)
@@ -116,7 +140,7 @@ http.ListenAndServe(":8080", fr)
 ```
 
 ### Error Handling
-Unlike many frameworks that panic, Z-Router returns errors on invalid registration:
+Unlike many frameworks that panic, Wand Router returns errors on invalid registration:
 
 ```go
 err := r.GET("/users/:id/posts/:id", handler)
@@ -134,8 +158,10 @@ if err != nil {
 ## Roadmap
 
 - [x] Core Router (Zero Alloc)
-- [ ] RingBuffer Logger (Async IO)
-- [ ] Middleware Support (`Use`, `Group`)
+- [x] RingBuffer Logger (Core)
+- [x] Middleware (Recovery, RequestID, AccessLog, Timeout, BodySizeLimit)
+- [x] Router-level middleware chaining (`Use`, `Group`)
+- [ ] Async log sinks
 
 ## License
 

@@ -28,6 +28,10 @@ var allowHeaderTable [1 << 7]string
 // HandleFunc defines the handler function type.
 type HandleFunc func(http.ResponseWriter, *http.Request)
 
+// Middleware wraps an http.Handler and returns a new http.Handler.
+// Chains are composed once at registration time to avoid per-request allocations.
+type Middleware func(http.Handler) http.Handler
+
 // ParamGetter exposes route parameter lookup for handlers.
 type ParamGetter interface {
 	Param(key string) (string, bool)
@@ -35,8 +39,15 @@ type ParamGetter interface {
 
 // Param is a helper to read route params from the ResponseWriter.
 func Param(w http.ResponseWriter, key string) (string, bool) {
-	if pg, ok := w.(ParamGetter); ok {
-		return pg.Param(key)
+	for w != nil {
+		if pg, ok := w.(ParamGetter); ok {
+			return pg.Param(key)
+		}
+		if uw, ok := w.(interface{ Unwrap() http.ResponseWriter }); ok {
+			w = uw.Unwrap()
+			continue
+		}
+		break
 	}
 	return "", false
 }
@@ -52,6 +63,11 @@ type Router struct {
 	paramPool sync.Pool                        // pool for Params (Zero Alloc Params)
 	partsPool sync.Pool                        // pool for pathSegments (Zero Alloc Split & Indices)
 	rwPool    sync.Pool                        // pool for paramRW wrappers (Zero Alloc Wrapper)
+
+	middlewares      []Middleware
+	routesCount      int
+	NotFound         HandleFunc
+	MethodNotAllowed HandleFunc
 }
 
 // pathSegments holds path segments and original indices.
@@ -206,6 +222,10 @@ func resetParamRW(prw *paramRW) {
 
 // Handle registers a route.
 func (r *Router) Handle(method, pattern string, handler HandleFunc) error {
+	return r.handle(method, pattern, handler, nil)
+}
+
+func (r *Router) handle(method, pattern string, handler HandleFunc, groupMws []Middleware) error {
 	if handler == nil {
 		return fmt.Errorf("nil handler for route: %s", pattern)
 	}
@@ -243,6 +263,29 @@ func (r *Router) Handle(method, pattern string, handler HandleFunc) error {
 		}
 	}
 
+	if len(groupMws) > 0 {
+		composed, err := applyMiddlewares(handler, groupMws)
+		if err != nil {
+			r.partsPool.Put(segs)
+			return err
+		}
+		handler = composed
+	}
+
+	r.mu.RLock()
+	routerMws := make([]Middleware, len(r.middlewares))
+	copy(routerMws, r.middlewares)
+	r.mu.RUnlock()
+
+	if len(routerMws) > 0 {
+		composed, err := applyMiddlewares(handler, routerMws)
+		if err != nil {
+			r.partsPool.Put(segs)
+			return err
+		}
+		handler = composed
+	}
+
 	// insert only needs parts
 	r.mu.Lock()
 	root, ok := r.roots[method]
@@ -252,6 +295,7 @@ func (r *Router) Handle(method, pattern string, handler HandleFunc) error {
 	}
 	err := root.insert(pattern, segs.parts, 0, handler, hasParams)
 	if err == nil {
+		r.routesCount++
 		if hasParams {
 			r.hasParams[method] = true
 		} else {
@@ -369,10 +413,18 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		if r.MethodNotAllowed != nil {
+			r.MethodNotAllowed(w, req)
+			return
+		}
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
+	if r.NotFound != nil {
+		r.NotFound(w, req)
+		return
+	}
 	http.NotFound(w, req)
 }
 
