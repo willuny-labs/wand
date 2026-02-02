@@ -105,7 +105,7 @@ func main() {
 ### GitHub API Benchmark
 
 Comparative results for the [GitHub API routing benchmark](https://github.com/smallnest/go-web-framework-benchmark).
-Run on Apple M4 Pro (Go 1.25).
+Run on Apple M4 Pro (Go 1.23).
 
 | Benchmark name | (1) | (2) | (3) | (4) |
 | :--- | :--- | :--- | :--- | :--- |
