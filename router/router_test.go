@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/willuny-labs/wand/logger"
+	"github.com/willuny-labs/wand/middleware"
 )
 
 func mustGET(tb testing.TB, r *Router, pattern string, handler HandleFunc) {
@@ -597,6 +600,191 @@ func TestRouter_DoubleSlash_Clean(t *testing.T) {
 	}
 	if loc := w.Header().Get("Location"); loc != "/static/js/app.js" {
 		t.Fatalf("expected Location /static/js/app.js got %q", loc)
+	}
+}
+
+func TestRouter_Group_NestedMiddlewares(t *testing.T) {
+	r := NewRouter()
+	var calls []string
+	mw := func(name string) Middleware {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				calls = append(calls, name+"-in")
+				next.ServeHTTP(w, req)
+				calls = append(calls, name+"-out")
+			})
+		}
+	}
+
+	if err := r.Use(mw("root")); err != nil {
+		t.Fatalf("use failed: %v", err)
+	}
+	api := r.Group("/api", mw("api"))
+	v1 := api.Group("/v1", mw("v1"))
+
+	if err := v1.GET("/users", func(w http.ResponseWriter, req *http.Request) {
+		calls = append(calls, "handler")
+	}); err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	r.ServeHTTP(rec, req)
+
+	want := []string{"root-in", "api-in", "v1-in", "handler", "v1-out", "api-out", "root-out"}
+	if len(calls) != len(want) {
+		t.Fatalf("unexpected call order: %v", calls)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("unexpected call order: %v", calls)
+		}
+	}
+}
+
+func TestRouter_Middleware_Precomposed(t *testing.T) {
+	r := NewRouter()
+	wraps := 0
+	if err := r.Use(func(next http.Handler) http.Handler {
+		wraps++
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req)
+		})
+	}); err != nil {
+		t.Fatalf("use failed: %v", err)
+	}
+
+	mustGET(t, r, "/ping", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	r.ServeHTTP(rec, req)
+	r.ServeHTTP(rec, req)
+	r.ServeHTTP(rec, req)
+
+	if wraps != 1 {
+		t.Fatalf("expected middleware to wrap once, got %d", wraps)
+	}
+}
+
+func TestRouter_Use_AfterRegister(t *testing.T) {
+	r := NewRouter()
+	mustGET(t, r, "/ping", func(w http.ResponseWriter, req *http.Request) {})
+	if err := r.Use(func(next http.Handler) http.Handler { return next }); err == nil {
+		t.Fatal("expected error when adding middleware after routes")
+	}
+}
+
+func TestRouter_WrapHandle(t *testing.T) {
+	r := NewRouter()
+	var called []string
+	if err := r.Use(WrapHandle(func(next HandleFunc) HandleFunc {
+		return func(w http.ResponseWriter, req *http.Request) {
+			called = append(called, "mw")
+			next(w, req)
+		}
+	})); err != nil {
+		t.Fatalf("use failed: %v", err)
+	}
+	mustGET(t, r, "/ping", func(w http.ResponseWriter, req *http.Request) {
+		called = append(called, "handler")
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	r.ServeHTTP(rec, req)
+
+	if len(called) != 2 || called[0] != "mw" || called[1] != "handler" {
+		t.Fatalf("unexpected call order: %v", called)
+	}
+}
+
+func TestRouter_CustomNotFound(t *testing.T) {
+	r := NewRouter()
+	r.NotFound = func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("expected 418, got %d", rec.Code)
+	}
+}
+
+func TestRouter_CustomMethodNotAllowed(t *testing.T) {
+	r := NewRouter()
+	mustPOST := func(tb testing.TB, r *Router, pattern string, handler HandleFunc) {
+		tb.Helper()
+		if err := r.POST(pattern, handler); err != nil {
+			tb.Fatalf("register %s failed: %v", pattern, err)
+		}
+	}
+	mustPOST(t, r, "/login", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	called := 0
+	r.MethodNotAllowed = func(w http.ResponseWriter, req *http.Request) {
+		called++
+		w.WriteHeader(http.StatusTeapot)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("expected 418, got %d", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); allow != "POST, OPTIONS" {
+		t.Fatalf("unexpected Allow header: %q", allow)
+	}
+	if called != 1 {
+		t.Fatalf("expected MethodNotAllowed to be called once, got %d", called)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodOptions, "/login", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for OPTIONS, got %d", rec.Code)
+	}
+	if called != 1 {
+		t.Fatalf("expected MethodNotAllowed not to be called for OPTIONS")
+	}
+}
+
+func TestRouter_Param_WithMiddlewareWrapper(t *testing.T) {
+	r := NewRouter()
+	rb, err := logger.NewRingBuffer(8)
+	if err != nil {
+		t.Fatalf("ring buffer: %v", err)
+	}
+	if err := r.Use(func(next http.Handler) http.Handler {
+		return middleware.AccessLog(rb, next)
+	}); err != nil {
+		t.Fatalf("use failed: %v", err)
+	}
+
+	mustGET(t, r, "/users/:id", func(w http.ResponseWriter, req *http.Request) {
+		id, ok := Param(w, "id")
+		if !ok || id != "42" {
+			t.Fatalf("expected id=42, got %q", id)
+		}
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/users/42", nil)
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 }
 

@@ -14,6 +14,7 @@
 ## Features
 
 - **Zero Allocation**: Optimized hot paths (static, dynamic, and wildcard routes) generate **0 bytes** of garbage per request.
+- **Zero-Alloc Param Extraction**: Params are captured via pooled slices and index offsets—no maps or context allocations.
 - **High Performance**: 
     - **Static Routes**: ~35ns
     - **Dynamic Routes**: ~100ns
@@ -21,6 +22,8 @@
 - **Frozen Mode**: Innovative `FrozenRouter` flattens static path segments for extreme read-heavy performance.
 - **Lock-Free Logger**: Specific high-throughput `RingBuffer` logger implementation.
 - **Minimalist Middleware**: Includes essential middlewares (Recovery, RequestID, AccessLog, Timeout, BodySizeLimit).
+- **Pre-composed Middleware**: `Router.Use` and `Group` build middleware chains at registration time (no per-request wrapping).
+- **Custom 404/405**: Optional `NotFound` and `MethodNotAllowed` handlers.
 
 ## Installation
 
@@ -47,17 +50,6 @@ import (
 func main() {
 	// Create a new router
 	r := router.NewRouter()
-	
-	// Register routes
-	_ = r.GET("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-
-	_ = r.GET("/users/:id", func(w http.ResponseWriter, req *http.Request) {
-		id, _ := router.Param(w, "id")
-		w.Write([]byte("User ID: " + id))
-	})
 
 	// Setup high-performance logger
 	rb, _ := logger.NewRingBuffer(1024)
@@ -65,17 +57,34 @@ func main() {
 		// batch process logs
 	})
 
-	// Compose middleware
-	h := middleware.Recovery(r)
-	h = middleware.RequestID(h)
-	h = middleware.BodySizeLimit(1<<20, h)
-	h = middleware.Timeout(5*time.Second, h)
-	h = middleware.AccessLog(rb, h)
+	// Compose middleware (must be called before registering routes)
+	if err := r.Use(
+		middleware.Recovery,
+		middleware.RequestID,
+		func(next http.Handler) http.Handler { return middleware.BodySizeLimit(1<<20, next) },
+		func(next http.Handler) http.Handler { return middleware.Timeout(5*time.Second, next) },
+		func(next http.Handler) http.Handler { return middleware.AccessLog(rb, next) },
+	); err != nil {
+		panic(err)
+	}
+
+	api := r.Group("/api")
+
+	// Register routes
+	_ = api.GET("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	_ = api.GET("/users/:id", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := router.Param(w, "id")
+		w.Write([]byte("User ID: " + id))
+	})
 
 	// Start graceful server
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: h,
+		Handler: r,
 	}
 
 	ctx, cancel := server.SignalContext(context.Background())

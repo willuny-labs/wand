@@ -13,6 +13,9 @@ type FrozenRouter struct {
 	paramPool sync.Pool
 	partsPool sync.Pool
 	rwPool    sync.Pool
+
+	NotFound         HandleFunc
+	MethodNotAllowed HandleFunc
 }
 
 type frozenNode struct {
@@ -107,6 +110,8 @@ func (r *Router) Freeze() (*FrozenRouter, error) {
 	fr := NewFrozenRouter()
 	fr.static = cloneStatic(r.static)
 	fr.hasParams = cloneHasParams(r.hasParams)
+	fr.NotFound = r.NotFound
+	fr.MethodNotAllowed = r.MethodNotAllowed
 
 	for method, root := range r.roots {
 		fr.roots[method] = freezeRoot(root)
@@ -320,10 +325,18 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		if r.MethodNotAllowed != nil {
+			r.MethodNotAllowed(w, req)
+			return
+		}
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
+	if r.NotFound != nil {
+		r.NotFound(w, req)
+		return
+	}
 	http.NotFound(w, req)
 }
 
