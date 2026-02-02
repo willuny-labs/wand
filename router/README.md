@@ -77,7 +77,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"github.com/WillunyLabs-LLC/wand/router"
+	"github.com/willunylabs/wand/router"
 )
 
 func main() {

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/WillunyLabs-LLC/wand/logger"
+	"github.com/willunylabs/wand/logger"
 )
 
 func TestRequestID_GeneratesWhenMissing(t *testing.T) {

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/WillunyLabs-LLC/wand/logger"
-	"github.com/WillunyLabs-LLC/wand/middleware"
+	"github.com/willunylabs/wand/logger"
+	"github.com/willunylabs/wand/middleware"
 )
 
 func mustGET(tb testing.TB, r *Router, pattern string, handler HandleFunc) {

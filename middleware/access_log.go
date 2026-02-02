@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/WillunyLabs-LLC/wand/logger"
+	"github.com/willunylabs/wand/logger"
 )
 
 // AccessLog writes structured access events into the ring buffer.

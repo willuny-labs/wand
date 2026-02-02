@@ -1,8 +1,8 @@
 # Wand 🪄
 
-[![CI](https://github.com/WillunyLabs-LLC/wand/actions/workflows/ci.yml/badge.svg)](https://github.com/WillunyLabs-LLC/wand/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/WillunyLabs-LLC/wand)](https://goreportcard.com/report/github.com/WillunyLabs-LLC/wand)
-[![Go Reference](https://pkg.go.dev/badge/github.com/WillunyLabs-LLC/wand.svg)](https://pkg.go.dev/github.com/WillunyLabs-LLC/wand)
+[![CI](https://github.com/willunylabs/wand/actions/workflows/ci.yml/badge.svg)](https://github.com/willunylabs/wand/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/willunylabs/wand)](https://goreportcard.com/report/github.com/willunylabs/wand)
+[![Go Reference](https://pkg.go.dev/badge/github.com/willunylabs/wand.svg)](https://pkg.go.dev/github.com/willunylabs/wand)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **High-Performance, Zero-Allocation HTTP Router for Go**
@@ -28,7 +28,7 @@
 ## Installation
 
 ```bash
-go get github.com/WillunyLabs-LLC/wand
+go get github.com/willunylabs/wand
 ```
 
 ## Quick Start
@@ -41,10 +41,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/WillunyLabs-LLC/wand/logger"
-	"github.com/WillunyLabs-LLC/wand/middleware"
-	"github.com/WillunyLabs-LLC/wand/router"
-	"github.com/WillunyLabs-LLC/wand/server"
+	"github.com/willunylabs/wand/logger"
+	"github.com/willunylabs/wand/middleware"
+	"github.com/willunylabs/wand/router"
+	"github.com/willunylabs/wand/server"
 )
 
 func main() {
