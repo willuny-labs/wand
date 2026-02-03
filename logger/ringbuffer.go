@@ -32,8 +32,6 @@ const (
 type RingBuffer struct {
 	// Producer Index (Atomic)
 	// Producers contend on this index to reserve slots.
-	// Producer Index (Atomic)
-	// Producers contend on this index to reserve slots.
 	head uint64
 	_    [56]byte // [Padding]: Ensures head is on its own cache line (64 bytes) to prevent "False Sharing".
 	// If head and tail were on the same cache line, a write to 'head' by a producer would invalid
@@ -84,9 +82,6 @@ func (rb *RingBuffer) Close() {
 	atomic.StoreUint32(&rb.closed, 1)
 }
 
-// TryWrite attempts to write a log event into the buffer.
-// Returns false if the buffer is full (strategy: drop).
-// This is lock-free and thread-safe for multiple producers.
 // TryWrite attempts to write a log event into the buffer.
 // Returns false if the buffer is full (strategy: drop).
 // This is lock-free and thread-safe for multiple producers.
