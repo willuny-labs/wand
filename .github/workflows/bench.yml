@@ -22,7 +22,7 @@ jobs:
       - name: Compare (if baseline present)
         run: ./scripts/bench-compare.sh
       - name: Upload results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: bench-results
           path: benchmarks/latest.txt
