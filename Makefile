@@ -7,10 +7,10 @@ race:
 	go test -race ./...
 
 bench:
-	go test ./router -run=^$ -bench=. -benchmem
+	go test ./router -run=^$$ -bench=. -benchmem
 
 fuzz:
-	go test ./router -run=^$ -fuzz=FuzzRouter_ -fuzztime=30s
+	go test ./router -run=^$$ -fuzz=FuzzRouter_ -fuzztime=30s
 
 lint:
 	golangci-lint run

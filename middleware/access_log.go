@@ -22,34 +22,49 @@ func AccessLog(rb *logger.RingBuffer, next http.Handler) http.Handler {
 		sw.ResponseWriter = w
 		sw.status = 0
 		sw.bytes = 0
+		var recovered any
+		defer func() {
+			if rec := recover(); rec != nil {
+				recovered = rec
+			}
+
+			status := sw.status
+			bytes := sw.bytes
+			sw.ResponseWriter = nil
+			sw.status = 0
+			sw.bytes = 0
+			statusWriterPool.Put(sw)
+			if status == 0 {
+				if recovered != nil {
+					status = http.StatusInternalServerError
+				} else {
+					status = http.StatusOK
+				}
+			}
+
+			remote := r.RemoteAddr
+			if host, _, err := net.SplitHostPort(remote); err == nil {
+				remote = host
+			}
+
+			end := time.Now()
+			event := logger.LogEvent{
+				Timestamp:     end.UnixNano(),
+				Method:        r.Method,
+				Path:          r.URL.Path,
+				Status:        uint16(status),
+				Bytes:         bytes,
+				DurationNanos: end.Sub(start).Nanoseconds(),
+				RemoteAddr:    remote,
+			}
+			_ = rb.TryWrite(event)
+
+			if recovered != nil {
+				panic(recovered)
+			}
+		}()
+
 		next.ServeHTTP(sw, r)
-
-		status := sw.status
-		bytes := sw.bytes
-		sw.ResponseWriter = nil
-		sw.status = 0
-		sw.bytes = 0
-		statusWriterPool.Put(sw)
-		if status == 0 {
-			status = http.StatusOK
-		}
-
-		remote := r.RemoteAddr
-		if host, _, err := net.SplitHostPort(remote); err == nil {
-			remote = host
-		}
-
-		end := time.Now()
-		event := logger.LogEvent{
-			Timestamp:     end.UnixNano(),
-			Method:        r.Method,
-			Path:          r.URL.Path,
-			Status:        uint16(status),
-			Bytes:         bytes,
-			DurationNanos: end.Sub(start).Nanoseconds(),
-			RemoteAddr:    remote,
-		}
-		_ = rb.TryWrite(event)
 	})
 }
 

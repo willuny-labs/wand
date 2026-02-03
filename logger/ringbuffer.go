@@ -50,6 +50,10 @@ type RingBuffer struct {
 	state []uint32
 
 	closed uint32
+
+	// PanicHandler is invoked if the consumer handler panics.
+	// If nil, the panic is rethrown to avoid silent data loss.
+	PanicHandler func(any)
 }
 
 // NewRingBuffer creates a ring buffer with the given capacity.
@@ -170,19 +174,19 @@ func (rb *RingBuffer) Consume(handler func([]LogEvent)) {
 
 				if endSlot > nextSlot {
 					// Contiguous: no wrap-around
-					consumeBatch(handler, rb.data[nextSlot:endSlot])
+					consumeBatch(handler, rb.PanicHandler, rb.data[nextSlot:endSlot])
 				} else if endSlot < nextSlot {
 					// Wrap-around: spans end of buffer and beginning
-					consumeBatch(handler, rb.data[nextSlot:])
+					consumeBatch(handler, rb.PanicHandler, rb.data[nextSlot:])
 					if endSlot > 0 {
-						consumeBatch(handler, rb.data[:endSlot])
+						consumeBatch(handler, rb.PanicHandler, rb.data[:endSlot])
 					}
 				} else {
 					// endSlot == nextSlot: full buffer wrap (available == capacity)
 					// This means we need to consume from nextSlot to end, then 0 to nextSlot
-					consumeBatch(handler, rb.data[nextSlot:])
+					consumeBatch(handler, rb.PanicHandler, rb.data[nextSlot:])
 					if nextSlot > 0 {
-						consumeBatch(handler, rb.data[:nextSlot])
+						consumeBatch(handler, rb.PanicHandler, rb.data[:nextSlot])
 					}
 				}
 
@@ -214,9 +218,15 @@ func (rb *RingBuffer) Consume(handler func([]LogEvent)) {
 	}
 }
 
-func consumeBatch(handler func([]LogEvent), batch []LogEvent) {
+func consumeBatch(handler func([]LogEvent), panicHandler func(any), batch []LogEvent) {
 	defer func() {
-		_ = recover()
+		if rec := recover(); rec != nil {
+			if panicHandler != nil {
+				panicHandler(rec)
+				return
+			}
+			panic(rec)
+		}
 	}()
 	handler(batch)
 }

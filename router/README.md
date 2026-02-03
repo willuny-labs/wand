@@ -155,7 +155,9 @@ if err != nil {
 ## Safety Notes
 
 - Runtime registration is supported, but it is serialized with an RWMutex and blocks concurrent reads while updating.
-- If a handler panics, pooled objects are not returned; use a recovery middleware if you need hard guarantees.
+- When `UseRawPath` is enabled, routing matches the **encoded** path only if `RawPath == EscapedPath()`. In that mode, decoded-path cleaning/redirects are skipped. If `RawPath` is invalid, routing falls back to decoded `Path` and canonicalization applies.
+- Make sure your reverse proxy and router agree on a single normalization/decoding layer to avoid route mismatches (e.g., `%2F` decoded upstream but treated as literal downstream).
+- If a handler panics, router pools (params/path segments/wrappers) are not returned; use a recovery middleware or `PanicHandler` if you need hard guarantees.
 - For untrusted traffic, consider limiting max request line length at the HTTP server or reverse proxy.
 
 ## Roadmap

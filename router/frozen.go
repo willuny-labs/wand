@@ -349,139 +349,38 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}()
 	}
 
-	useRaw := r.UseRawPath && req.URL.RawPath != "" && req.URL.RawPath == req.URL.EscapedPath()
-	if len(req.URL.Path) > MaxPathLength {
-		w.WriteHeader(http.StatusRequestURITooLong)
-		return
-	}
-	if useRaw && len(req.URL.RawPath) > MaxPathLength {
-		w.WriteHeader(http.StatusRequestURITooLong)
-		return
+	ctx, ok := prepareRouteContext(w, req, r.UseRawPath, r.IgnoreCase)
+	if !ok {
+		return // Already responded (redirect or error)
 	}
 
-	cleaned := req.URL.Path
-	if !useRaw {
-		cleaned = cleanPath(req.URL.Path)
-		if len(cleaned) > MaxPathLength {
-			w.WriteHeader(http.StatusRequestURITooLong)
-			return
-		}
-		if cleaned != req.URL.Path {
-			redirectToPath(w, req, cleaned)
-			return
-		}
-	}
-
-	matchPath := cleaned
-	paramPath := cleaned
-	redirectFn := redirectToPath
-	if useRaw {
-		matchPath = req.URL.RawPath
-		paramPath = req.URL.RawPath
-		redirectFn = redirectToRawPath
-	}
-	if r.IgnoreCase {
-		matchPath = lowerASCII(matchPath)
-	}
-	altMatch := altTrailingSlash(matchPath)
-	altParam := altTrailingSlash(paramPath)
-	altRedirect := altTrailingSlash(paramPath)
-	altOK := altMatch != "" && altMatch != matchPath
 	host := normalizeHost(req.Host)
-
-	method := req.Method
-
 	hostTable := r.tableForHost(host)
 	hasHost := host != "" && hostTable != &r.table
 	defaultTable := &r.table
 
+	// Try host-specific table first
 	if hasHost {
-		if r.serveInTable(w, req, method, matchPath, paramPath, hostTable) {
+		if r.serveInTable(w, req, ctx.method, ctx.matchPath, ctx.paramPath, hostTable) {
 			return
 		}
-		if r.StrictSlash {
-			if altOK && altRedirect != "" {
-				if _, ok := r.allowedMethodsInTable(altMatch, hostTable); ok {
-					redirectFn(w, req, altRedirect)
-					return
-				}
-			}
-		} else {
-			if altOK && r.serveInTable(w, req, method, altMatch, altParam, hostTable) {
-				return
-			}
-		}
-		if allow, ok := r.allowedMethodsInTable(matchPath, hostTable); ok {
-			w.Header().Set("Allow", allow)
-			if req.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-			if r.MethodNotAllowed != nil {
-				r.MethodNotAllowed(w, req)
-				return
-			}
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if r.tryAlternateSlashInTable(w, req, ctx, hostTable) {
 			return
-		} else if !r.StrictSlash && altOK {
-			if allow, ok := r.allowedMethodsInTable(altMatch, hostTable); ok {
-				w.Header().Set("Allow", allow)
-				if req.Method == http.MethodOptions {
-					w.WriteHeader(http.StatusOK)
-					return
-				}
-				if r.MethodNotAllowed != nil {
-					r.MethodNotAllowed(w, req)
-					return
-				}
-				w.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
 		}
-	}
-
-	if r.serveInTable(w, req, method, matchPath, paramPath, defaultTable) {
-		return
-	}
-	if r.StrictSlash {
-		if altOK && altRedirect != "" {
-			if _, ok := r.allowedMethodsInTable(altMatch, defaultTable); ok {
-				redirectFn(w, req, altRedirect)
-				return
-			}
-		}
-	} else {
-		if altOK && r.serveInTable(w, req, method, altMatch, altParam, defaultTable) {
+		if r.handleMethodNotAllowedInTable(w, req, ctx, hostTable) {
 			return
 		}
 	}
 
-	if allow, ok := r.allowedMethodsInTable(matchPath, defaultTable); ok {
-		w.Header().Set("Allow", allow)
-		if req.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		if r.MethodNotAllowed != nil {
-			r.MethodNotAllowed(w, req)
-			return
-		}
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	// Try default table
+	if r.serveInTable(w, req, ctx.method, ctx.matchPath, ctx.paramPath, defaultTable) {
 		return
-	} else if !r.StrictSlash && altOK {
-		if allow, ok := r.allowedMethodsInTable(altMatch, defaultTable); ok {
-			w.Header().Set("Allow", allow)
-			if req.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-			if r.MethodNotAllowed != nil {
-				r.MethodNotAllowed(w, req)
-				return
-			}
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
+	}
+	if r.tryAlternateSlashInTable(w, req, ctx, defaultTable) {
+		return
+	}
+	if r.handleMethodNotAllowedInTable(w, req, ctx, defaultTable) {
+		return
 	}
 
 	if r.NotFound != nil {
@@ -489,6 +388,39 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	http.NotFound(w, req)
+}
+
+func (r *FrozenRouter) tryAlternateSlashInTable(w http.ResponseWriter, req *http.Request, ctx routeContext, table *frozenTable) bool {
+	altMatch, ok := alternatePath(ctx.matchPath)
+	if !ok || altMatch == ctx.matchPath {
+		return false
+	}
+	if r.StrictSlash {
+		if _, ok := r.allowedMethodsInTable(altMatch, table); ok {
+			altRedirect, ok := alternatePath(ctx.paramPath)
+			if ok && altRedirect != "" {
+				ctx.redirectFn(w, req, altRedirect)
+				return true
+			}
+		}
+		return false
+	}
+	altParam, _ := alternatePath(ctx.paramPath)
+	return r.serveInTable(w, req, ctx.method, altMatch, altParam, table)
+}
+
+func (r *FrozenRouter) handleMethodNotAllowedInTable(w http.ResponseWriter, req *http.Request, ctx routeContext, table *frozenTable) bool {
+	if allow, ok := r.allowedMethodsInTable(ctx.matchPath, table); ok {
+		return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
+	}
+	if !r.StrictSlash {
+		if altMatch, ok := alternatePath(ctx.matchPath); ok {
+			if allow, ok := r.allowedMethodsInTable(altMatch, table); ok {
+				return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
+			}
+		}
+	}
+	return false
 }
 
 func (r *FrozenRouter) serveInTable(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath string, table *frozenTable) bool {

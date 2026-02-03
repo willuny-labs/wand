@@ -59,12 +59,24 @@ func main() {
 		workers = runtime.NumCPU()
 	}
 
-	perWorker := 0
+	var rateCh <-chan struct{}
 	if *rps > 0 {
-		perWorker = *rps / workers
-		if perWorker <= 0 {
-			perWorker = 1
+		interval := time.Second / time.Duration(*rps)
+		if interval <= 0 {
+			interval = time.Nanosecond
 		}
+		tokens := make(chan struct{}, workers)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		go func() {
+			for range ticker.C {
+				select {
+				case tokens <- struct{}{}:
+				default:
+				}
+			}
+		}()
+		rateCh = tokens
 	}
 
 	wg.Add(workers)
@@ -72,18 +84,9 @@ func main() {
 		go func(seed int64) {
 			defer wg.Done()
 			rnd := rand.New(rand.NewSource(seed))
-			var ticker *time.Ticker
-			if perWorker > 0 {
-				interval := time.Second / time.Duration(perWorker)
-				if interval <= 0 {
-					interval = time.Nanosecond
-				}
-				ticker = time.NewTicker(interval)
-				defer ticker.Stop()
-			}
 			for time.Now().Before(end) {
-				if ticker != nil {
-					<-ticker.C
+				if rateCh != nil {
+					<-rateCh
 				}
 				path := paths[rnd.Intn(len(paths))]
 				resp, err := client.Get(srv.URL + path)

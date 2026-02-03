@@ -1031,6 +1031,124 @@ func TestFrozenRouter_IgnoreCase_StaticSpan(t *testing.T) {
 	}
 }
 
+func TestRouter_Frozen_Parity(t *testing.T) {
+	r := NewRouter()
+	r.IgnoreCase = true
+	r.StrictSlash = true
+
+	mustGET(t, r, "/users/:id", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := Param(w, "id")
+		w.Write([]byte("user:" + id))
+	})
+	mustGET(t, r, "/static/*filepath", func(w http.ResponseWriter, req *http.Request) {
+		fp, _ := Param(w, "filepath")
+		w.Write([]byte("static:" + fp))
+	})
+	if err := r.POST("/users", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}); err != nil {
+		t.Fatalf("register post failed: %v", err)
+	}
+
+	fr := mustFreeze(t, r)
+
+	type testCase struct {
+		name   string
+		method string
+		path   string
+		host   string
+	}
+
+	cases := []testCase{
+		{name: "static", method: http.MethodGet, path: "/static/css/app.css"},
+		{name: "wildcard-empty", method: http.MethodGet, path: "/static"},
+		{name: "param", method: http.MethodGet, path: "/users/42"},
+		{name: "post", method: http.MethodPost, path: "/users"},
+		{name: "notfound", method: http.MethodGet, path: "/missing"},
+		{name: "method-not-allowed", method: http.MethodPut, path: "/users"},
+		{name: "strict-slash-redirect", method: http.MethodGet, path: "/users/42/"},
+		{name: "ignore-case", method: http.MethodGet, path: "/UsErS/AbC"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec1 := httptest.NewRecorder()
+			req1 := httptest.NewRequest(tc.method, tc.path, nil)
+			if tc.host != "" {
+				req1.Host = tc.host
+			}
+			r.ServeHTTP(rec1, req1)
+
+			rec2 := httptest.NewRecorder()
+			req2 := httptest.NewRequest(tc.method, tc.path, nil)
+			if tc.host != "" {
+				req2.Host = tc.host
+			}
+			fr.ServeHTTP(rec2, req2)
+
+			if rec1.Code != rec2.Code {
+				t.Fatalf("status mismatch: router=%d frozen=%d", rec1.Code, rec2.Code)
+			}
+			if rec1.Body.String() != rec2.Body.String() {
+				t.Fatalf("body mismatch: router=%q frozen=%q", rec1.Body.String(), rec2.Body.String())
+			}
+
+			allow1 := rec1.Header().Get("Allow")
+			allow2 := rec2.Header().Get("Allow")
+			if allow1 != allow2 {
+				t.Fatalf("allow header mismatch: router=%q frozen=%q", allow1, allow2)
+			}
+
+			loc1 := rec1.Header().Get("Location")
+			loc2 := rec2.Header().Get("Location")
+			if loc1 != loc2 {
+				t.Fatalf("location mismatch: router=%q frozen=%q", loc1, loc2)
+			}
+		})
+	}
+}
+
+func TestRegisterPprof(t *testing.T) {
+	r := NewRouter()
+	if err := RegisterPprof(r, "/debug/pprof"); err == nil {
+		t.Fatalf("expected RegisterPprof to require Allow policy")
+	}
+}
+
+func TestRegisterPprofWith_Deny(t *testing.T) {
+	r := NewRouter()
+	if err := RegisterPprofWith(r, PprofOptions{
+		Prefix: "/debug/pprof",
+		Allow:  func(*http.Request) bool { return false },
+	}); err != nil {
+		t.Fatalf("register pprof failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+}
+
+func TestRegisterPprofWith_Allow(t *testing.T) {
+	r := NewRouter()
+	if err := RegisterPprofWith(r, PprofOptions{
+		Prefix: "/debug/pprof",
+		Allow:  func(*http.Request) bool { return true },
+	}); err != nil {
+		t.Fatalf("register pprof failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code == http.StatusForbidden || rec.Code == http.StatusNotFound {
+		t.Fatalf("expected pprof route to be accessible, got %d", rec.Code)
+	}
+}
+
 func TestRouter_UseRawPath_EncodedParam(t *testing.T) {
 	r := NewRouter()
 	r.UseRawPath = true
