@@ -103,7 +103,7 @@ func main() {
 					atomic.AddUint64(&errCount, 1)
 				}
 			}
-		}(randSeed() ^ (uint64(i) + 1))
+		}(randSeed() ^ (uint64(i) + 1)) // #nosec G115
 	}
 
 	wg.Wait()
